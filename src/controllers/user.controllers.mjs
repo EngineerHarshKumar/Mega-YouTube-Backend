@@ -583,7 +583,7 @@ const gettingChannelDetails = asyncHandler(async (request, response) => {
         {   
             // Creating a Group
             $lookup: {
-                from: "subscription",
+                from: "subscriptions",
                 localField: "_id",
                 foreignField: "channel",
                 as: "subscriberDocs"
@@ -593,7 +593,7 @@ const gettingChannelDetails = asyncHandler(async (request, response) => {
         // Third Stage of Aggregation 
         {
             $lookup: {
-                from: "subscription",
+                from: "subscriptions",
                 localField: "_id",
                 foreignField: "subscriber",
                 as: "subscribedToDocs"
