@@ -3,10 +3,11 @@ import ApiError from "../utils/apiError.mjs";
 import ApiResponse from "../utils/apiResponse.mjs";
 import { User } from "../models/user.model.mjs";
 import { uploadOnCloudinary } from "../utils/uploadingCloudinary.mjs";
-import { response, request, urlencoded } from "express";
+// import { response, request, urlencoded } from "express";
 import jwt from "jsonwebtoken";
-import { emit } from "nodemon";
 import mongoose from "mongoose";
+import { getPublic_IDFrom_URL } from "../utils/getPublic_ID.mjs";
+import { deleteFileFromCloudinary } from "../utils/deleteFileFromCloudinary.mjs";
 
 const registerNewUser = asyncHandler(async (request, response) => {
     const { userName, fullName, email, password } = request.body;
@@ -47,7 +48,10 @@ const registerNewUser = asyncHandler(async (request, response) => {
 
     // now we have to upload this file on the cloudinary
 
-    const avatarCloudinaryInstance = await uploadOnCloudinary(avatarLocalPath);
+    const avatarCloudinaryInstance = await uploadOnCloudinary(
+        avatarLocalPath,
+        "image",
+    );
 
     if (!avatarCloudinaryInstance?.url) {
         throw new ApiError(500, "avatar file not uploaded");
@@ -57,8 +61,10 @@ const registerNewUser = asyncHandler(async (request, response) => {
 
     // we are only uploading the coverImage on the cloudinary only if the coverImage is avaialable to us
     if (coverImageLocalPath) {
-        coverImageCloudinaryInstance =
-            await uploadOnCloudinary(coverImageLocalPath);
+        coverImageCloudinaryInstance = await uploadOnCloudinary(
+            coverImageLocalPath,
+            "image",
+        );
     }
 
     // All done now we have to write & create new user in the database
@@ -68,7 +74,7 @@ const registerNewUser = asyncHandler(async (request, response) => {
         password,
         fullName,
         avatar: avatarCloudinaryInstance.url,
-        coverImage: coverImageCloudinaryInstance?.url || "",
+        coverImage: coverImageCloudinaryInstance?.url ?? "",
     });
 
     const validateNewUser = await User.findById(newlyCreatedUser._id)
@@ -185,7 +191,7 @@ const loginUser = asyncHandler(async (request, response) => {
                     accessToken,
                     refreshToken,
                 },
-                `${userName} successfully Login`,
+                `${existsUser.fullName} successfully Login`,
             ),
         );
 });
@@ -224,7 +230,7 @@ const logoutUser = asyncHandler(async (request, response) => {
 });
 
 const refreshTokening = asyncHandler(async (request, response) => {
-    const cookies = request.cookies;
+    const cookies = request.cookies || null;
     console.log(`cookies: ${cookies}`);
 
     if (!cookies) {
@@ -290,50 +296,35 @@ const refreshTokening = asyncHandler(async (request, response) => {
     );
 });
 
-const changePassword = asyncHandler( async (requese, response) => {
+const changePassword = asyncHandler(async (request, response) => {
+    const { oldPassword, newPassword } = request.body;
 
-    const { oldPassword , newPassword } = request.body;
+    console.log(`oldPassword: ${oldPassword}\nNewPassword: ${newPassword}`);
 
-    if ( !oldPassword || !newPassword ) {
-         throw new ApiError(
-            400,
-            "All Fields are Required"
-         );
+    if (!oldPassword || !newPassword) {
+        throw new ApiError(400, "All Fields are Required");
     }
 
-    const user = await User.findById(requese.user._id);
+    const user = await User.findById(request.user._id);
 
-    if ( !user ) {
-        throw new ApiError(
-            400,
-            "User not Found"
-        );
+    if (!user) {
+        throw new ApiError(400, "User not Found");
     }
 
     // Now check whether the oldPassword is correct or not
     const isOldPasswordCorrect = await user.isPasswordCorrect(oldPassword);
-    
-    if ( !isOldPasswordCorrect ) {
-        throw new ApiError(
-            400,
-            "Wrong Password"
-        );
+
+    if (!isOldPasswordCorrect) {
+        throw new ApiError(400, "Wrong Password");
     }
 
-
-    user.password = newPassword ;
-    await user.save({validateBeforeSave: false});
+    user.password = newPassword;
+    await user.save({ validateBeforeSave: false });
 
     response
         .status(200)
-        .json(
-            new ApiResponse(
-                200,
-                {user},
-                "Password is correct"
-            )
-        );
-}); 
+        .json(new ApiResponse(200, { user }, "Password is correct"));
+});
 
 // secure controller
 const getCurrentUser = asyncHandler(async (request, response) => {
@@ -369,10 +360,17 @@ const updatingAccountDetails = asyncHandler(async (request, response) => {
 
     const { fullName, email } = request.body;
 
+    if (!fullName && !email) {
+        throw new ApiError(
+            400,
+            `Atleast one Field are required, FullName or Email`,
+        );
+    }
+
     const updatingFullName = fullName ? true : false;
     const updatingEmail = email ? true : false;
     const userID = request.user;
-    const foundedUser = await User.findById(userID).exec();
+    // const foundedUser = await User.findById(userID).exec();
 
     if (updatingFullName) {
         const updateFullNameUser = await User.findByIdAndUpdate(
@@ -407,7 +405,7 @@ const updatingAccountDetails = asyncHandler(async (request, response) => {
             { new: true },
         );
 
-        const isEmailUpdated = updatedEmailUser.email === email;
+        const isEmailUpdated = (await updatedEmailUser.email) === email;
         if (!isEmailUpdated) {
             throw new ApiError(500, "Email is not updated");
         } else {
@@ -467,11 +465,30 @@ const updatingAvatarImage = asyncHandler(async (request, response) => {
     }
 
     // Now we have to try to upload on the cloudinary
-    const avatarInstance = await uploadOnCloudinary(avatarLocalPath);
+    const avatarInstance = await uploadOnCloudinary(avatarLocalPath, "image");
 
     if (!avatarInstance) {
         throw new ApiError(500, "Avatar Image uploading Failed");
     }
+
+    // at this stage we uploading the new fie successfully Now we have to delete the image ( old Image ) from the cloudinary and
+
+    const public_ID = await getPublic_IDFrom_URL(foundUser.avatar);
+
+    console.log(`Public_ID in avatar updation: ${public_ID}`);
+
+    await deleteFileFromCloudinary(public_ID, "image")
+        .then((result) => {
+            console.log(
+                `Result in delete File from Cloudinary in user controller: ${result}`,
+            );
+        })
+        .catch((error) => {
+            throw new ApiError(
+                500,
+                `Error while delete File From Cloudinary: ${error.message}`,
+            );
+        });
 
     const avatarUpdatedUser = await User.findByIdAndUpdate(
         foundUser._id,
@@ -509,17 +526,37 @@ const updatingCoverImage = asyncHandler(async (request, response) => {
         throw new ApiError(401, "Unauthorized/ Please Login First");
     }
 
-    const coverImageLocalPath = request.file.coverImage;
+    const coverImageLocalPath = request.file?.path;
 
     if (!coverImageLocalPath) {
         throw new ApiError(400, "CoverImage not received");
     }
 
-    const coverImageInstance = await uploadOnCloudinary(coverImageLocalPath);
+    const coverImageInstance = await uploadOnCloudinary(
+        coverImageLocalPath,
+        "image",
+    );
 
     if (!coverImageInstance) {
         throw new ApiError(500, "CoverImage Uploading Failed");
     }
+
+    // here we are successfully uploading the new coverImage Now we have to delete the file
+
+    const public_ID = await getPublic_IDFrom_URL(foundUser.coverImage);
+
+    await deleteFileFromCloudinary(public_ID, "image")
+        .then((result) => {
+            console.log(
+                `Result in delete File from Cloudinary in user controller: ${result}`,
+            );
+        })
+        .catch((error) => {
+            throw new ApiError(
+                500,
+                `Error while delete File From Cloudinary: ${error.message}`,
+            );
+        });
 
     const coverImageUpdatedUser = await User.findByIdAndUpdate(
         foundUser._id,
@@ -549,16 +586,11 @@ const updatingCoverImage = asyncHandler(async (request, response) => {
         );
 });
 
-
 const gettingChannelDetails = asyncHandler(async (request, response) => {
-
     const { userName } = request.params;
 
-    if ( !userName.trim() ) {
-        throw new ApiError(
-            400,
-            "userName is not accessible"
-        );
+    if (!userName.trim()) {
+        throw new ApiError(400, "userName is not accessible");
     }
 
     /*
@@ -569,55 +601,56 @@ const gettingChannelDetails = asyncHandler(async (request, response) => {
     3. Add the Fields to the original Data
     */
 
-
     const channel = await User.aggregate([
-        
         // First Stage of Aggregation
         {
             $match: {
-                userName: userName
-            }
+                userName: userName,
+            },
         },
 
         // Second Stage of Aggregation
-        {   
+        {
             // Creating a Group
             $lookup: {
                 from: "subscriptions",
                 localField: "_id",
                 foreignField: "channel",
-                as: "subscriberDocs"
-            }  
+                as: "subscriberDocs",
+            },
         },
 
-        // Third Stage of Aggregation 
+        // Third Stage of Aggregation
         {
             $lookup: {
                 from: "subscriptions",
                 localField: "_id",
                 foreignField: "subscriber",
-                as: "subscribedToDocs"
-            }   
+                as: "subscribedToDocs",
+            },
         },
         {
             $addFields: {
                 subscribers: {
-                    $size: "$subscriberDocs"
+                    $size: "$subscriberDocs",
                 },
                 subscribedTo: {
-                    $size: "$subscribedToDocs"
+                    $size: "$subscribedToDocs",
                 },
 
                 isSubscribed: {
                     $cond: {
                         if: {
-                            $in: [ request.user?._id , "$subscribedToDocs.subscriber"]
+                            $in: [
+                                request.user?._id,
+                                "$subscribedToDocs.subscriber",
+                            ],
                         },
                         then: true,
-                        else: false 
-                    }
-                }
-            }
+                        else: false,
+                    },
+                },
+            },
         },
 
         {
@@ -629,41 +662,35 @@ const gettingChannelDetails = asyncHandler(async (request, response) => {
                 subscribers: 1,
                 subscribedTo: 1,
                 avatar: 1,
-                coverImage: 1
-            }
-        }
+                coverImage: 1,
+            },
+        },
     ]);
 
-    if ( !channel.length ) {
-        throw new ApiError(
-            400,
-            "Channel is not Exits"
-        );
+    if (!channel.length) {
+        throw new ApiError(400, "Channel is not Exits");
     }
-
 
     response
         .status(200)
         .json(
             new ApiResponse(
                 200,
-                {channelDetails: channel[0] },
-                "User Channel Details Received Successfully"
-            )
+                { channelDetails: channel[0] },
+                "User Channel Details Received Successfully",
+            ),
         );
 });
 
-const gettingUserWatchHistory = asyncHandler( async (request, response) => {
-
-    const userID = request.user._id ;
+const gettingUserWatchHistory = asyncHandler(async (request, response) => {
+    const userID = request.user._id;
 
     await User.aggregate([
-
         // First Stage Aggregation: Filtering the document
         {
             $match: {
-                _id : new mongoose.Types.ObjectId.request.user._id
-            }
+                _id: new mongoose.Types.ObjectId.request.user._id(),
+            },
         },
 
         // Second Stage Aggregation: Grouping
@@ -688,38 +715,24 @@ const gettingUserWatchHistory = asyncHandler( async (request, response) => {
                                         fullName: 1,
                                         email: 1,
                                         avatar: 1,
-                                        coverImag: 1
-                                    }
-                                }
-                            ]
-                        }
+                                        coverImag: 1,
+                                    },
+                                },
+                            ],
+                        },
                     },
                     {
                         $addFields: {
                             owner: {
-                                $first: "$owner"
-                            }
-                        }
-                    }
-                ]
-            }
-        }
+                                $first: "$owner",
+                            },
+                        },
+                    },
+                ],
+            },
+        },
     ]);
 });
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 // changePassword not work
 export {
@@ -733,5 +746,5 @@ export {
     updatingAvatarImage,
     updatingCoverImage,
     gettingChannelDetails,
-    gettingUserWatchHistory
+    gettingUserWatchHistory,
 };

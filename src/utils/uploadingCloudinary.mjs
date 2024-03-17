@@ -3,7 +3,7 @@ import { v2 as cloudinary } from "cloudinary";
 import fs from "fs";
 import fsPromises from "fs/promises";
 
-export const uploadOnCloudinary = async (filePath) => {
+export const uploadOnCloudinary = async (filePath, fileType) => {
     try {
         if (!fs.existsSync(filePath)) {
             throw new Error("File path does not exists");
@@ -15,6 +15,7 @@ export const uploadOnCloudinary = async (filePath) => {
 
         const cloudinaryResponse = await cloudinary.uploader.upload(
             filePath,
+            { resource_type: fileType },
             async (err, result) => {
                 if (err) {
                     throw new Error("Error on Cloudinary Uploading");
